@@ -35,6 +35,20 @@
     'Operations & Safety': { icon: 'i-shield', tone: 'ops' },
   };
   const subjectMeta = (c) => SUBJECTS[c] || { icon: 'i-book', tone: 'reg' };
+
+  // Set sizes offered for a subject: the standard sizes that fit, plus "all" for small subjects.
+  function sizesFor(subject) {
+    const pool = subject ? COUNT_BY_CAT[subject] : TOTAL;
+    const list = SIZES.filter((n) => n <= pool);
+    if (subject && pool < 100 && !list.includes(pool)) list.push(pool);
+    return list;
+  }
+
+  function effectiveSize(size, subject) {
+    const list = sizesFor(subject);
+    if (list.includes(size)) return size;
+    return list.filter((n) => n <= size).pop() || list[0];
+  }
   const PRAISE = ['Correct!', 'Nice work!', 'Spot on!', 'Exactly right!', 'You got it!'];
 
   // ---------- Small helpers ----------
@@ -108,7 +122,7 @@
       session: null,
       history: [],     // finished sessions, newest first
       streak: { count: 0, last: null },
-      settings: { theme: 'system', builder: { mode: 'practice', size: 30, subject: null } },
+      settings: { theme: 'system', shortcuts: true, builder: { mode: 'practice', size: 30, subject: null } },
     };
   }
 
@@ -143,7 +157,7 @@
       answers,
       seed: Number.isFinite(x.seed) ? x.seed >>> 0 : 1,
       startedAt,
-      deadline: exam ? (Number.isFinite(x.deadline) ? x.deadline : startedAt + EXAM_MS) : null,
+      deadline: exam ? Math.min(Number.isFinite(x.deadline) ? x.deadline : Infinity, startedAt + EXAM_MS) : null,
       finishedAt: Number.isFinite(x.finishedAt) ? x.finishedAt : null,
       timeUp: !!x.timeUp,
       note: typeof x.note === 'string' ? x.note.slice(0, 240) : '',
@@ -191,11 +205,13 @@
     }
     const set = raw.settings && typeof raw.settings === 'object' ? raw.settings : {};
     if (THEMES.includes(set.theme)) s.settings.theme = set.theme;
+    s.settings.shortcuts = set.shortcuts !== false;
     const b = set.builder && typeof set.builder === 'object' ? set.builder : {};
+    const bSubject = CATEGORIES.includes(b.subject) ? b.subject : null;
     s.settings.builder = {
       mode: b.mode === 'exam' ? 'exam' : 'practice',
-      size: SIZES.includes(b.size) ? b.size : 30,
-      subject: CATEGORIES.includes(b.subject) ? b.subject : null,
+      size: effectiveSize(Math.max(1, int(b.size, 30)), bSubject),
+      subject: bSubject,
     };
     return s;
   }
@@ -283,6 +299,31 @@
     };
   }
 
+  // Exams take every subject in proportion to its share of the bank, so no subject is left out.
+  function drawExam() {
+    const prev = new Set(state.lastIds);
+    const used = new Set(state.usedIds);
+    const quota = CATEGORIES.map((c) => ({ c, exact: (EXAM_SIZE * COUNT_BY_CAT[c]) / TOTAL }));
+    for (const q of quota) q.n = Math.floor(q.exact);
+    let spare = EXAM_SIZE - quota.reduce((t, q) => t + q.n, 0);
+    for (const q of quota.slice().sort((x, y) => (y.exact - y.n) - (x.exact - x.n))) {
+      if (spare-- <= 0) break;
+      q.n++;
+    }
+    const picked = [];
+    const nextUsed = new Set(used);
+    for (const { c, n } of quota) {
+      const pool = idsIn(c);
+      const fresh = shuffle(pool.filter((id) => !prev.has(id) && !used.has(id)));
+      const reused = shuffle(pool.filter((id) => !prev.has(id) && used.has(id)));
+      const recent = shuffle(pool.filter((id) => prev.has(id)));
+      if (fresh.length < n) for (const id of pool) nextUsed.delete(id);
+      picked.push(...fresh.concat(reused, recent).slice(0, n));
+    }
+    for (const id of picked) nextUsed.add(id);
+    return { ids: picked, usedIds: Array.from(nextUsed), cycleReset: false, repeatedRecent: picked.some((id) => prev.has(id)) };
+  }
+
   function choicesFor(q, seed) {
     const base = [
       { key: 'c', text: q.answer, correct: true },
@@ -312,6 +353,7 @@
   }
 
   const answeredCount = (s) => s.ids.filter((id) => isDone(s, id)).length;
+  const touchedCount = (s) => s.ids.filter((id) => isDone(s, id) || !!(s.answers[id] && s.answers[id].picks && s.answers[id].picks.length)).length;
 
   function phaseOf(s, id) {
     const a = s.answers[id];
@@ -359,6 +401,13 @@
   }
 
   function toast(msg) {
+    const inDialog = $('#dlg-settings[open] #settings-msg');
+    if (inDialog) {
+      inDialog.textContent = '';
+      window.setTimeout(() => { inDialog.textContent = msg; }, 40);
+      return;
+    }
+    announce(msg);
     const el = $('#toast');
     el.textContent = msg;
     el.hidden = false;
@@ -370,7 +419,7 @@
   function confirmReplace() {
     const cur = state.session;
     if (!cur || cur.finishedAt) return true;
-    const done = answeredCount(cur);
+    const done = touchedCount(cur);
     if (cur.mode === 'exam') {
       return window.confirm(`You have an exam simulation in progress (${done} of ${cur.ids.length} answered). Start something new and discard it?`);
     }
@@ -389,12 +438,14 @@
       note = `Reviewing ${plural(ids.length, 'card')} you missed or saved. Get one right on the first try to clear it.`;
     } else {
       subject = mode === 'practice' && CATEGORIES.includes(opts.subject) ? opts.subject : null;
-      const size = mode === 'exam' ? EXAM_SIZE : SIZES.includes(opts.size) ? opts.size : 30;
-      const d = drawIds(size, subject);
+      const size = mode === 'exam' ? EXAM_SIZE : effectiveSize(Number(opts.size) || 30, subject);
+      const firstEver = state.lastIds.length === 0;
+      const d = mode === 'exam' ? drawExam() : drawIds(size, subject);
       state.usedIds = d.usedIds;
       state.lastIds = d.ids;
       ids = shuffle(d.ids);
       if (mode === 'exam') note = 'The clock is running. Answer every question, then submit to see your score.';
+      else if (firstEver) note = 'Your first set. Take your time and read every choice.';
       else if (d.cycleReset) note = 'You’ve now drawn every question once, so a fresh rotation has started.';
       else if (d.repeatedRecent) note = 'This subject is small, so a few cards from your last session are back.';
       else note = 'None of these cards were in your last session.';
@@ -418,7 +469,8 @@
     ui.selected = null;
     ui.flash = null;
     save();
-    navigate('study');
+    if (ui.view === 'results') replaceRoute('study');
+    else navigate('study');
   }
 
   function finishSession(opts) {
@@ -434,17 +486,25 @@
         recordStat(id, correct);
         state.mastery[id] = correct ? 'mastered' : 'review';
       }
-      if (s.ids.some((id) => s.answers[id] && s.answers[id].pick)) bumpStreak();
+      if (!o.timeUp && s.ids.some((id) => s.answers[id] && s.answers[id].pick)) bumpStreak();
       s.timeUp = !!o.timeUp;
+    } else {
+      for (const id of s.ids) {
+        const a = s.answers[id];
+        if (a && !a.result && a.picks.length) { a.result = 'missed'; settleMastery(id, a); }
+      }
     }
-    s.finishedAt = Date.now();
+    s.finishedAt = s.mode === 'exam' && o.timeUp ? Math.min(Date.now(), s.deadline) : Date.now();
     const sum = summarize(s);
     state.history.unshift({ n: s.number, mode: s.mode, subject: s.subject, correct: sum.correct, total: sum.total, date: s.finishedAt });
     state.history = state.history.slice(0, 20);
     ui.resultsTab = 'all';
     stopTimer();
     save();
-    if (o.navigate !== false) navigate('results');
+    if (o.navigate !== false) {
+      if (ui.view === 'session') replaceRoute('results');
+      else navigate('results');
+    }
   }
 
   function discardSession() {
@@ -464,7 +524,7 @@
     const s = state.session;
     if (!s || s.finishedAt) return;
     if (s.mode === 'exam') return submitExam();
-    const done = answeredCount(s);
+    const done = touchedCount(s);
     if (done === 0) {
       if (!window.confirm('End this session? You haven’t checked any answers yet, so it will be discarded.')) return;
       state.session = null;
@@ -532,6 +592,10 @@
     if (!input || input.disabled) return;
     input.checked = true;
     selectChoice(c.key);
+    const active = document.activeElement;
+    if (!(active && active.name === 'choice')) {
+      announce(s.mode === 'exam' ? `${c.label} selected, ${answeredCount(s)} of ${s.ids.length} answered` : `${c.label} selected`);
+    }
   }
 
   function syncSelection() {
@@ -577,6 +641,7 @@
     const correct = key === 'c';
     a.picks.push(key);
     if (first) recordStat(q.id, correct);
+    if (first && !correct) state.mastery[q.id] = 'review';
     if (correct) a.result = first ? 'correct' : 'correct2';
     else if (a.picks.length >= 2) a.result = 'missed';
     if (a.result) settleMastery(q.id, a);
@@ -631,6 +696,7 @@
     ui.selected = null;
     save();
     renderSession({ focus: 'question' });
+    announce(`Card ${index + 1} of ${s.ids.length}`);
   }
 
   function advance() {
@@ -678,6 +744,12 @@
       el.textContent = formatClock(left);
       el.parentElement.classList.toggle('is-low', left < 5 * 60 * 1000);
     }
+    const mins = Math.ceil(left / 60000);
+    const warnKey = `${s.number}:${mins}`;
+    if ([30, 10, 5, 1].includes(mins) && ui.lastWarn !== warnKey && left > 0) {
+      ui.lastWarn = warnKey;
+      announce(`${mins} minute${mins > 1 ? 's' : ''} left in your exam.`);
+    }
     if (left <= 0) {
       stopTimer();
       closeDialogs();
@@ -710,11 +782,18 @@
   const HEADINGS = { dashboard: '#dash-title', study: '#study-title', results: '#results-title', questions: '#questions-title' };
 
   function parseHash() {
-    const raw = decodeURIComponent(location.hash || '').replace(/^#\/?/, '').replace(/\/+$/, '').toLowerCase();
+    let h = location.hash || '';
+    try { h = decodeURIComponent(h); } catch (e) { /* malformed escape: use the raw hash */ }
+    const raw = h.replace(/^#\/?/, '').replace(/\/+$/, '').toLowerCase();
     if (raw === 'study') return 'study';
     if (raw === 'study/results') return 'results';
     if (raw === 'questions' || raw === 'library') return 'questions';
     return 'dashboard';
+  }
+
+  function replaceRoute(name) {
+    history.replaceState(null, '', HASH[name]);
+    route();
   }
 
   function navigate(name) {
@@ -727,16 +806,19 @@
     for (const d of $$('dialog[open]')) d.close();
   }
 
-  function route() {
+  function route(opts) {
+    const quiet = !!(opts && opts.quiet);
     let name = parseHash();
     const expired = checkExamExpiry();
     const s = state.session;
     if (expired && name === 'study') name = 'results';
+    if (expired) toast('Your exam simulation ran out of time, so it was scored.');
     if (name === 'results' && !(s && s.finishedAt)) name = 'study';
     const view = name === 'study' && s && !s.finishedAt ? 'session' : name;
     if (location.hash !== HASH[name]) history.replaceState(null, '', HASH[name]);
 
-    closeDialogs();
+    const same = quiet && view === ui.view;
+    if (!same) closeDialogs();
     stopTimer();
     ui.view = view;
     for (const [key, id] of Object.entries(VIEW_IDS)) document.getElementById(id).hidden = key !== view;
@@ -750,12 +832,31 @@
     }
 
     renderChrome();
-    const moveFocus = !ui.firstRoute;
+    const moveFocus = !ui.firstRoute && !same;
     if (view === 'dashboard') renderDashboard();
     else if (view === 'study') renderStudy();
     else if (view === 'session') renderSession({ focus: moveFocus ? 'question' : 'none' });
     else if (view === 'results') renderResults();
-    else if (view === 'questions') renderQuestions();
+    else if (view === 'questions') {
+      if (same) {
+        const open = new Set($$('#lib-list details[open] .q-num').map((n) => n.textContent));
+        renderQuestionList();
+        for (const d of $$('#lib-list details')) if (open.has($('.q-num', d).textContent)) d.open = true;
+      } else renderQuestions();
+    }
+
+    // An exam left running in the background still ends on time.
+    const live = state.session;
+    if (view !== 'session' && live && live.mode === 'exam' && !live.finishedAt) {
+      ui.timer = window.setInterval(() => {
+        if (!checkExamExpiry()) return;
+        stopTimer();
+        toast('Your exam simulation ran out of time, so it was scored.');
+        renderChrome();
+        if (ui.view === 'dashboard') renderDashboard();
+        else if (ui.view === 'study') renderStudy();
+      }, 1000);
+    }
 
     if (moveFocus) {
       window.scrollTo(0, 0);
@@ -816,7 +917,8 @@
       </div>`;
     } else {
       const first = state.history.length === 0;
-      const label = b.mode === 'exam' ? 'Start exam simulation' : `Start ${b.size} cards`;
+      const n = effectiveSize(b.size, b.subject);
+      const label = b.mode === 'exam' ? 'Start exam simulation' : `Start ${n}${b.subject ? ` ${b.subject}` : ''} cards`;
       hero.innerHTML = `<div class="card hero-card">
         <div>
           <p class="eyebrow">${first ? 'Welcome aboard' : `Ready for session #${state.sessionCount + 1}`}</p>
@@ -900,7 +1002,8 @@
     const b = state.settings.builder;
     const exam = b.mode === 'exam';
     const pool = b.subject ? COUNT_BY_CAT[b.subject] : TOTAL;
-    if (b.size > pool) b.size = SIZES.filter((n) => n <= pool).pop() || SIZES[0];
+    b.size = effectiveSize(b.size, b.subject);
+    const sizes = sizesFor(b.subject);
     const last = state.session && state.session.finishedAt ? state.session : null;
     const queue = reviewQueue();
     const lastSum = last ? summarize(last) : null;
@@ -929,8 +1032,11 @@
             </ul>` : `
             <div class="field">
               <span class="field-label" id="size-label">Number of cards</span>
-              <div class="size-grid" role="group" aria-labelledby="size-label">
-                ${SIZES.map((n) => `<button type="button" class="size-btn" data-action="size" data-size="${n}" aria-pressed="${b.size === n}"${n > pool ? ' disabled' : ''}><b>${n}</b><span>${n === 10 ? 'quick set' : 'cards'}</span></button>`).join('')}
+              <div class="size-grid" role="group" aria-labelledby="size-label" style="grid-template-columns:repeat(${Math.max(sizes.length, 3)},minmax(0,1fr))">
+                ${sizes.map((n) => {
+                  const all = b.subject && n === pool;
+                  return `<button type="button" class="size-btn" data-action="size" data-size="${n}" aria-pressed="${b.size === n}"${all ? ` aria-label="All ${n} cards"` : ''}><b>${all ? 'All' : n}</b><span>${all ? `${n} cards` : n === 10 ? 'quick set' : 'cards'}</span></button>`;
+                }).join('')}
               </div>
             </div>
             <label class="field">
@@ -940,28 +1046,28 @@
                 ${CATEGORIES.map((c) => `<option value="${esc(c)}"${b.subject === c ? ' selected' : ''}>${esc(c)} (${COUNT_BY_CAT[c]})</option>`).join('')}
               </select>
             </label>`}
-          <button type="button" class="btn btn-primary btn-lg btn-block" data-action="start">${exam ? 'Start exam simulation' : `Start ${Math.min(b.size, pool)} cards`}${icon('i-arrow-right')}</button>
+          <button type="button" class="btn btn-primary btn-lg btn-block" data-action="start">${exam ? 'Start exam simulation' : `Start ${b.size} cards`}${icon('i-arrow-right')}</button>
           <p class="builder-note">${icon(exam ? 'i-clock' : 'i-rotate')}<span>${exam ? 'The timer keeps running if you leave the page, just like the real test.' : 'Cards from your last session are held back, so every session feels fresh.'}</span></p>
         </section>
 
         <div class="side-stack">
           ${last ? `<section class="card side-card">
-            <h3>Last session</h3>
+            <h2>Last session</h2>
             <p>${esc(sessionLabel(last))} · ${lastSum.correct} of ${lastSum.total} correct${lastSum.total ? ` (${pct(lastSum.correct, lastSum.total)}%)` : ''}</p>
             <a class="btn btn-secondary btn-sm" href="#/study/results">View results</a>
           </section>` : ''}
           ${queue.length ? `<section class="card side-card">
-            <h3>Review list</h3>
+            <h2>Review list</h2>
             <p>${plural(queue.length, 'card')} you missed or saved. Get one right on the first try to clear it.</p>
             <button type="button" class="btn btn-secondary btn-sm" data-action="review">${icon('i-rotate')}Review ${Math.min(queue.length, REVIEW_BATCH)}</button>
           </section>` : ''}
           <section class="card side-card">
-            <h3>This rotation</h3>
+            <h2>This rotation</h2>
             <p class="rotation"><b>${freshLeft()}</b><span>of ${TOTAL} questions not drawn yet</span></p>
             <p>New sessions pull unseen questions first. Once you’ve drawn all ${TOTAL}, a fresh rotation starts.</p>
           </section>
           <section class="card side-card hide-sm">
-            <h3>Keyboard shortcuts</h3>
+            <h2>Keyboard shortcuts</h2>
             <p><kbd class="kbd">A</kbd>–<kbd class="kbd">D</kbd> choose · <kbd class="kbd">Enter</kbd> check or continue · <kbd class="kbd">←</kbd> <kbd class="kbd">→</kbd> move between cards</p>
           </section>
         </div>
@@ -1031,8 +1137,8 @@
       barState = 'exam';
       status = `<span class="bar-muted" id="exam-status">${done} of ${total} answered</span>`;
       const flagged = !!(a && a.flagged);
-      actions = `<button type="button" class="btn btn-secondary" data-action="prev"${s.pos === 0 ? ' disabled' : ''} aria-label="Previous question">${icon('i-arrow-left')}<span class="hide-sm">Back</span></button>
-        <button type="button" class="btn btn-secondary" data-action="flag" id="btn-flag" aria-pressed="${flagged}">${icon('i-flag')}<span class="hide-sm">${flagged ? 'Flagged' : 'Flag'}</span><span class="sr-only"> this question to revisit</span></button>
+      actions = `<button type="button" class="btn btn-secondary" data-action="prev"${s.pos === 0 ? ' disabled' : ''} aria-label="Back to previous question">${icon('i-arrow-left')}<span class="hide-sm">Back</span></button>
+        <button type="button" class="btn btn-secondary" data-action="flag" id="btn-flag" aria-pressed="${flagged}" aria-label="Flag question">${icon('i-flag')}<span class="hide-sm">${flagged ? 'Flagged' : 'Flag'}</span></button>
         ${s.pos < total - 1
           ? `<button type="button" class="btn btn-primary" data-action="next">Next${icon('i-arrow-right')}</button>`
           : `<button type="button" class="btn btn-primary" data-action="submit-exam">Submit exam</button>`}`;
@@ -1040,7 +1146,7 @@
       status = phase === 'retry'
         ? `<span class="bar-title">${icon('i-x-circle')}Not quite. One more try.</span>`
         : `<span class="bar-muted hide-sm">Pick an answer, then check it.</span>`;
-      actions = `<button type="button" class="btn btn-ghost" data-action="reveal">${icon('i-eye')}<span>Show answer</span></button>
+      actions = `<button type="button" class="btn btn-ghost" data-action="reveal" aria-label="Show answer">${icon('i-eye')}<span class="hide-sm">Show answer</span></button>
         <button type="button" class="btn btn-primary" data-action="check" id="btn-check"${ui.selected ? '' : ' disabled'}>Check</button>`;
     } else {
       const r = a.result;
@@ -1056,7 +1162,7 @@
       const allDone = s.ids.every((id) => isDone(s, id));
       const btnCls = r === 'correct' || r === 'correct2' ? 'btn-success' : r === 'missed' ? 'btn-danger' : 'btn-primary';
       status = `<span class="bar-title">${icon(ic)}${esc(title)}</span><span class="bar-sub">${esc(sub)}</span>`;
-      actions = `${r === 'correct' ? `<button type="button" class="btn btn-ghost" data-action="flag" id="btn-flag" aria-pressed="${!!a.flagged}">${icon('i-flag')}<span class="hide-sm">${a.flagged ? 'Saved' : 'Review later'}</span><span class="sr-only">${a.flagged ? ': saved to review list' : ': save to review list'}</span></button>` : ''}
+      actions = `${r === 'correct' ? `<button type="button" class="btn btn-ghost" data-action="flag" id="btn-flag" aria-pressed="${!!a.flagged}" aria-label="Review later">${icon('i-flag')}<span class="hide-sm">Review later</span></button>` : ''}
         <button type="button" class="btn ${btnCls}" data-action="advance" id="btn-continue">${allDone ? 'See results' : 'Continue'}${icon('i-arrow-right')}</button>`;
     }
 
@@ -1116,6 +1222,7 @@
   }
 
   // ---------- Card map ----------
+  const MAP_GLYPH = { correct: 'i-check', correct2: 'i-rotate', missed: 'i-x', revealed: 'i-eye' };
   function openMap() {
     const s = state.session;
     if (!s || s.finishedAt) return;
@@ -1123,9 +1230,9 @@
     const done = answeredCount(s);
     $('#map-sub').textContent = `${sessionLabel(s)} · ${done} of ${s.ids.length} answered`;
     const legend = exam
-      ? [['is-current', 'Current'], ['st-answered', 'Answered'], ['is-flagged', 'Flagged'], ['', 'Not answered']]
-      : [['is-current', 'Current'], ['st-correct', 'Correct'], ['st-correct2', 'Second try'], ['st-missed', 'Missed or shown'], ['', 'Not answered']];
-    $('#map-legend').innerHTML = legend.map(([c, l]) => `<li><i class="${c}" aria-hidden="true"></i>${l}</li>`).join('');
+      ? [['is-current', 'Current'], ['st-answered', 'Answered', 'i-check'], ['is-flagged', 'Flagged'], ['', 'Not answered']]
+      : [['is-current', 'Current'], ['st-correct', 'Correct', 'i-check'], ['st-correct2', 'Second try', 'i-rotate'], ['st-missed', 'Missed', 'i-x'], ['st-revealed', 'Answer shown', 'i-eye'], ['', 'Not answered']];
+    $('#map-legend').innerHTML = legend.map(([c, l, g]) => `<li><i class="${c}" aria-hidden="true">${g ? icon(g) : ''}</i>${l}</li>`).join('');
     $('#map-grid').innerHTML = s.ids.map((id, i) => {
       const a = s.answers[id];
       let st = '';
@@ -1141,7 +1248,8 @@
         label = 'one try used';
       }
       const current = i === s.pos;
-      return `<button type="button" class="map-cell ${st}${current ? ' is-current' : ''}" data-action="jump" data-index="${i}" aria-label="Card ${i + 1}, ${label}"${current ? ' aria-current="true"' : ''}>${i + 1}</button>`;
+      const glyph = exam ? (a && a.pick ? 'i-check' : '') : a && a.result ? MAP_GLYPH[a.result] : '';
+      return `<button type="button" class="map-cell ${st}${current ? ' is-current' : ''}" data-action="jump" data-index="${i}" aria-label="Card ${i + 1}, ${label}"${current ? ' aria-current="true"' : ''}>${i + 1}${glyph ? icon(glyph, 'cell-mark') : ''}</button>`;
     }).join('');
     const finish = $('#map-finish');
     finish.textContent = exam ? 'Submit exam' : s.ids.every((id) => isDone(s, id)) ? 'See results' : 'End session early';
@@ -1217,9 +1325,9 @@
       ${list.length || missedCount ? `<section class="section" aria-labelledby="review-title">
         <div class="section-head">
           <h2 id="review-title">Card review</h2>
-          ${missedCount ? `<div class="tabs" role="tablist" aria-label="Filter cards">
-            <button type="button" class="tab" role="tab" data-action="rtab" data-tab="all" aria-selected="${tab === 'all'}">All</button>
-            <button type="button" class="tab" role="tab" data-action="rtab" data-tab="missed" aria-selected="${tab === 'missed'}">Missed (${missedCount})</button>
+          ${missedCount ? `<div class="tabs" role="group" aria-label="Show cards">
+            <button type="button" class="tab" data-action="rtab" data-tab="all" aria-pressed="${tab === 'all'}">All</button>
+            <button type="button" class="tab" data-action="rtab" data-tab="missed" aria-pressed="${tab === 'missed'}">Missed (${missedCount})</button>
           </div>` : ''}
         </div>
         <div class="q-list">${list.map((id) => resultItem(s, id)).join('')}</div>
@@ -1395,6 +1503,8 @@
   function openSettings() {
     const dlg = $('#dlg-settings');
     for (const r of $$('input[name="theme"]', dlg)) r.checked = r.value === state.settings.theme;
+    $('#set-shortcuts').checked = state.settings.shortcuts;
+    $('#settings-msg').textContent = '';
     dlg.showModal();
   }
 
@@ -1463,7 +1573,7 @@
         break;
       case 'size': {
         const n = Number(el.dataset.size);
-        if (SIZES.includes(n)) b.size = n;
+        if (sizesFor(b.subject).includes(n)) b.size = n;
         save();
         renderStudy();
         $(`[data-action="size"][data-size="${b.size}"]`).focus();
@@ -1530,10 +1640,14 @@
         renderResults();
         $(`[data-action="rtab"][data-tab="${ui.resultsTab}"]`).focus();
         break;
-      case 'lib-more':
+      case 'lib-more': {
+        const before = ui.lib.shown;
         ui.lib.shown += LIB_PAGE;
         renderQuestionList();
+        const first = $$('#lib-list .q-item > summary')[before];
+        if (first) first.focus();
         break;
+      }
       case 'lib-clear':
         ui.lib = { q: '', subject: '', diff: '', status: '', source: '', shown: LIB_PAGE };
         renderQuestions();
@@ -1563,8 +1677,16 @@
     document.addEventListener('click', (e) => {
       const dlg = e.target instanceof HTMLDialogElement ? e.target : null;
       if (dlg && dlg.open) { dlg.close(); return; }
+      if (e.target.closest('.skip-link')) {
+        e.preventDefault();
+        const target = (ui.view === 'session' ? $('#q-text') : $(HEADINGS[ui.view])) || $('#main');
+        target.focus({ preventScroll: true });
+        target.scrollIntoView({ block: 'start' });
+        return;
+      }
       const el = e.target.closest('[data-action]');
       if (!el || el.disabled) return;
+      if (el.dataset.action === 'advance' && e.detail > 1) return;
       handleAction(el, e);
     });
 
@@ -1573,9 +1695,13 @@
       if (t.name === 'choice') selectChoice(t.value);
       else if (t.id === 'builder-subject') {
         state.settings.builder.subject = CATEGORIES.includes(t.value) ? t.value : null;
+        state.settings.builder.size = effectiveSize(state.settings.builder.size, state.settings.builder.subject);
         save();
         renderStudy();
         $('#builder-subject').focus();
+      } else if (t.id === 'set-shortcuts') {
+        state.settings.shortcuts = t.checked;
+        save();
       } else if (t.name === 'theme') {
         state.settings.theme = THEMES.includes(t.value) ? t.value : 'system';
         save();
@@ -1604,7 +1730,9 @@
 
     document.addEventListener('keydown', (e) => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (document.documentElement.classList.contains('splash-on')) return;
       if ($('dialog[open]')) return;
+      if (!state.settings.shortcuts && e.key !== 'Enter' && !e.key.startsWith('Arrow')) return;
       const t = e.target;
       const typing = t.closest && t.closest('input:not([type="radio"]), textarea, select, [contenteditable="true"]');
 
@@ -1645,7 +1773,7 @@
       if (e.key !== STORE_KEY) return;
       state = load();
       applyTheme();
-      route();
+      route({ quiet: true });
     });
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
     const onScheme = () => { if (state.settings.theme === 'system') applyTheme(); };
@@ -1656,6 +1784,32 @@
     });
   }
 
+  // ---------- Splash ----------
+  function runSplash() {
+    const root = document.documentElement;
+    const splash = $('#splash');
+    if (!splash) return;
+    if (!root.classList.contains('splash-on')) { splash.remove(); return; }
+    const app = $('.app');
+    if (app) app.inert = true;
+    let leaving = false;
+    const leave = () => {
+      if (leaving) return;
+      leaving = true;
+      window.clearTimeout(timer);
+      window.removeEventListener('keydown', leave, true);
+      splash.removeEventListener('pointerdown', leave);
+      if (app) app.inert = false;
+      splash.classList.add('is-leaving');
+      const done = () => { root.classList.remove('splash-on'); splash.remove(); };
+      splash.addEventListener('animationend', (e) => { if (e.target === splash) done(); });
+      window.setTimeout(done, 900);
+    };
+    const timer = window.setTimeout(leave, 880);
+    window.addEventListener('keydown', leave, true);
+    splash.addEventListener('pointerdown', leave);
+  }
+
   // ---------- Start ----------
   function init() {
     if (!QUESTIONS.length) {
@@ -1663,6 +1817,7 @@
       return;
     }
     applyTheme();
+    runSplash();
     bindEvents();
     route();
   }

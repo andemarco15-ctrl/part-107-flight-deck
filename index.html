@@ -4,26 +4,36 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Part 107 Flight Deck · Free FAA drone test practice</title>
-  <meta name="description" content="Free practice for the FAA Part 107 Remote Pilot knowledge test: 250 original questions across all seven subjects, with a plain explanation and an FAA source for every answer. No sign-up.">
+  <meta name="description" content="Free FAA Part 107 drone test practice: 250 questions across all seven subjects, each with a plain explanation and an FAA source. No sign-up.">
   <meta name="theme-color" content="#fbfaf8">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Part 107 Flight Deck">
   <meta property="og:title" content="Part 107 Flight Deck · Free FAA drone test practice">
   <meta property="og:description" content="250 practice questions for the FAA Part 107 drone pilot test, with explanations and FAA sources. Free, no sign-up.">
   <meta name="twitter:card" content="summary">
+  <link rel="canonical" href="https://uaspart107.com/">
+  <meta property="og:url" content="https://uaspart107.com/">
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap">
   <link rel="stylesheet" href="assets/styles.css">
   <script>
-    /* Apply a saved light/dark choice before the page paints. */
+    /* Before the page paints: apply the saved theme, and play the splash once per visit. */
     (function () {
+      var root = document.documentElement;
       try {
         var saved = JSON.parse(localStorage.getItem('p107-flight-deck/v1') || '{}');
         var theme = saved && saved.settings && saved.settings.theme;
-        if (theme === 'light' || theme === 'dark') document.documentElement.setAttribute('data-theme', theme);
+        if (theme === 'light' || theme === 'dark') root.setAttribute('data-theme', theme);
       } catch (e) {}
+      var play = true;
+      try {
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) play = false;
+        if (sessionStorage.getItem('p107-splash') === 'shown') play = false;
+        sessionStorage.setItem('p107-splash', 'shown');
+      } catch (e) {}
+      if (play) root.classList.add('splash-on');
     })();
   </script>
 </head>
@@ -81,6 +91,32 @@
       <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
     </g>
   </svg>
+
+  <div class="splash" id="splash" aria-hidden="true">
+    <svg width="0" height="0" style="position:absolute" focusable="false">
+      <filter id="splash-goo" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="11" result="blur"/>
+        <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 22 -9" result="goo"/>
+        <feComposite in="SourceGraphic" in2="goo" operator="atop"/>
+      </filter>
+    </svg>
+    <div class="splash-center">
+      <div class="splash-stage">
+        <span class="splash-ripple"></span>
+        <div class="splash-fluid">
+          <span class="drop drop-core"></span>
+          <span class="drop drop-a"></span>
+          <span class="drop drop-b"></span>
+          <span class="drop drop-c"></span>
+          <span class="drop drop-d"></span>
+          <span class="drop drop-e"></span>
+        </div>
+        <svg class="splash-mark" viewBox="0 0 32 32" focusable="false"><use href="#logo"></use></svg>
+      </div>
+      <p class="splash-name">Flight Deck</p>
+      <p class="splash-kicker">Part 107 prep</p>
+    </div>
+  </div>
 
   <a class="skip-link" href="#main">Skip to content</a>
 
@@ -198,7 +234,7 @@
                 <label class="field"><span class="field-label">Source</span><select id="lib-source"></select></label>
               </div>
               <div class="lib-summary">
-                <p id="lib-count"></p>
+                <p id="lib-count" role="status" aria-atomic="true"></p>
                 <button type="button" class="link-btn" data-action="lib-clear" id="lib-clear" hidden>Clear filters</button>
               </div>
             </div>
@@ -248,12 +284,17 @@
           </div>
         </fieldset>
         <div class="setting">
+          <h3 class="setting-title">Keyboard</h3>
+          <label class="check-row"><input type="checkbox" id="set-shortcuts"><span><b>Single-key shortcuts</b>A–D or 1–4 to choose, F to flag, / to search. Enter and the arrow keys always work.</span></label>
+        </div>
+        <div class="setting">
           <h3 class="setting-title">Your progress</h3>
           <p class="setting-text">Progress is saved in this browser only. Export a backup file to move it to another device or browser.</p>
           <div class="setting-row">
             <button type="button" class="btn btn-secondary btn-sm" data-action="export"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-download"></use></svg>Export</button>
             <label class="btn btn-secondary btn-sm file-btn"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-upload"></use></svg>Import<input type="file" id="import-file" accept="application/json,.json"></label>
           </div>
+          <p class="settings-msg" id="settings-msg" role="status" aria-live="polite"></p>
         </div>
         <div class="setting">
           <h3 class="setting-title">Start over</h3>
@@ -286,7 +327,7 @@
     </div>
   </dialog>
 
-  <div class="toast" id="toast" role="status" hidden></div>
+  <div class="toast" id="toast" aria-hidden="true" hidden></div>
   <div class="sr-only" id="live" aria-live="polite" aria-atomic="true"></div>
 
   <script src="assets/questions.js"></script>
