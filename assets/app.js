@@ -972,7 +972,20 @@
   }
 
   // ---------- Dashboard ----------
+  function greetingText() {
+    const h = new Date().getHours();
+    const part = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+    const name = sync.user ? firstName(sync.user) : '';
+    return name ? `${part}, ${name}.` : `${part}.`;
+  }
+
+  function renderGreeting() {
+    const el = $('#dash-greeting');
+    if (el) el.textContent = greetingText();
+  }
+
   function renderDashboard() {
+    renderGreeting();
     const s = state.session;
     const b = state.settings.builder;
     const hero = $('#dash-hero');
@@ -1159,9 +1172,8 @@
     $('#view-study').innerHTML = `<div class="page">
       <header class="page-head">
         <div>
-          <p class="eyebrow">Study cards</p>
+          <p class="eyebrow">FAA Part 107 · Remote Pilot knowledge test</p>
           <h1 id="study-title" tabindex="-1">Start a study session</h1>
-          <p class="page-sub">Each card is one question. Pick an answer, check it, and see why it’s right, with the FAA source one tap away.</p>
         </div>
       </header>
       <div class="study-grid">
@@ -2231,6 +2243,7 @@
   }
 
   function renderAccount() {
+    renderGreeting();
     const u = sync.user;
     const btn = $('#account-btn');
     if (!btn) return;
