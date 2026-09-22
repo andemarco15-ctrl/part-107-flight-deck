@@ -2,7 +2,14 @@
 
 **Live at https://uaspart107.com**
 
-Also served from https://andemarco15-ctrl.github.io — an identical mirror for networks that block newly registered domains. Run `./deploy.sh "message"` to publish to both.
+Test site: https://andemarco15-ctrl.github.io (marked TEST, hidden from search engines).
+
+Publishing:
+
+```bash
+./test.sh "what changed"   # put the current work on the test site
+./ship.sh "what changed"   # merge the tested version to uaspart107.com
+```
 
 Free practice for the FAA Part 107 Remote Pilot knowledge test: 250 original questions across all seven test subjects, each with an explanation and a link to the FAA source behind it.
 
