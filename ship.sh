@@ -6,6 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 MSG="${1:-Update site}"
+python3 tools/stamp.py .
 
 git add -A
 git diff --cached --quiet || git commit -q -m "$MSG"

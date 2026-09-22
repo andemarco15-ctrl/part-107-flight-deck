@@ -6,6 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 MSG="${1:-Test build}"
+python3 tools/stamp.py .
 MIRROR="${2:-../mirror}"
 
 if [ ! -d "$MIRROR/.git" ]; then
@@ -22,7 +23,7 @@ git branch -f test HEAD
 # Copy the site across, minus the files that belong to the real site only.
 rsync -a --delete \
   --exclude '.git' --exclude '.claude' --exclude 'CNAME' --exclude '.gitignore' \
-  --exclude 'test.sh' --exclude 'ship.sh' --exclude 'README.md' \
+  --exclude 'test.sh' --exclude 'ship.sh' --exclude 'README.md' --exclude 'tools' --exclude 'VERSION' \
   ./ "$MIRROR/"
 
 # Mark it as the test copy and keep it out of search results.

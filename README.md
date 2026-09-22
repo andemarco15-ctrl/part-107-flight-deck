@@ -1,5 +1,7 @@
 # Part 107 Flight Deck
 
+Version 1.0 (see `VERSION`; `tools/stamp.py` stamps it into the site on publish, and the running site polls `version.json` to offer an update).
+
 **Live at https://uaspart107.com**
 
 Test site: https://andemarco15-ctrl.github.io (marked TEST, hidden from search engines).
