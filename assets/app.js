@@ -122,7 +122,8 @@
       session: null,
       history: [],     // finished sessions, newest first
       streak: { count: 0, last: null },
-      settings: { theme: 'system', shortcuts: true, builder: { mode: 'practice', size: 30, subject: null } },
+      settings: { theme: 'system', shortcuts: true, notifSeen: [], builder: { mode: 'practice', size: 30, subject: null } },
+      updatedAt: 0,
     };
   }
 
@@ -206,6 +207,8 @@
     const set = raw.settings && typeof raw.settings === 'object' ? raw.settings : {};
     if (THEMES.includes(set.theme)) s.settings.theme = set.theme;
     s.settings.shortcuts = set.shortcuts !== false;
+    s.settings.notifSeen = Array.isArray(set.notifSeen) ? set.notifSeen.filter((k) => typeof k === 'string' && k.length < 80).slice(-60) : [];
+    s.updatedAt = Number.isFinite(raw.updatedAt) && raw.updatedAt > 0 ? raw.updatedAt : 0;
     const b = set.builder && typeof set.builder === 'object' ? set.builder : {};
     const bSubject = CATEGORIES.includes(b.subject) ? b.subject : null;
     s.settings.builder = {
@@ -225,12 +228,53 @@
     }
   }
 
-  function save() {
+  function saveLocal() {
     try {
       window.localStorage.setItem(STORE_KEY, JSON.stringify(state));
     } catch (e) {
       /* Storage can be full or blocked; the app keeps working for this visit. */
     }
+  }
+
+  function save() {
+    state.updatedAt = Date.now();
+    saveLocal();
+    schedulePush();
+  }
+
+  // Combine progress from this device and the account, keeping the most information.
+  function mergeStates(local, remote) {
+    const out = freshState();
+    for (const id of ALL_IDS) {
+      const a = local.stats[id];
+      const b = remote.stats[id];
+      const na = a ? a[0] : 0;
+      const nb = b ? b[0] : 0;
+      const stat = nb > na ? b : a || b;
+      if (stat) out.stats[id] = stat.slice();
+      const m = nb > na ? remote.mastery[id] || local.mastery[id] : local.mastery[id] || remote.mastery[id];
+      if (m) out.mastery[id] = m;
+    }
+    const newer = (remote.updatedAt || 0) > (local.updatedAt || 0) ? remote : local;
+    out.usedIds = newer.usedIds.slice();
+    out.lastIds = newer.lastIds.slice();
+    out.sessionCount = Math.max(local.sessionCount, remote.sessionCount);
+    const localActive = local.session && !local.session.finishedAt;
+    out.session = localActive ? local.session : newer.session;
+    const seen = new Set();
+    out.history = local.history.concat(remote.history)
+      .filter((h) => { const k = `${h.n}|${h.date}`; if (seen.has(k)) return false; seen.add(k); return true; })
+      .sort((x, y) => y.date - x.date)
+      .slice(0, 20);
+    const sa = local.streak;
+    const sb = remote.streak;
+    if (!sa.last) out.streak = Object.assign({}, sb);
+    else if (!sb.last) out.streak = Object.assign({}, sa);
+    else if (sa.last === sb.last) out.streak = { last: sa.last, count: Math.max(sa.count, sb.count) };
+    else out.streak = Object.assign({}, sa.last > sb.last ? sa : sb);
+    out.settings = Object.assign({}, local.settings, { builder: Object.assign({}, newer.settings.builder) });
+    out.updatedAt = Math.max(local.updatedAt || 0, remote.updatedAt || 0, Date.now());
+    return sanitize(out);
   }
 
   let state = load();
@@ -424,7 +468,7 @@
       return window.confirm(`You have an exam simulation in progress (${done} of ${cur.ids.length} answered). Start something new and discard it?`);
     }
     if (done === 0) return true;
-    return window.confirm(`You have a session in progress (${done} of ${cur.ids.length} answered). Start a new one instead? Answers you already checked still count toward your progress.`);
+    return window.confirm(`You have a session in progress (${done} of ${cur.ids.length} started). Start a new one instead? Answers you already checked still count toward your progress.`);
   }
 
   function startSession(opts) {
@@ -767,6 +811,17 @@
     const dark = t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
     const meta = $('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', dark ? '#1a1816' : '#fbfaf8');
+    const toggle = $('#theme-toggle');
+    if (toggle) {
+      toggle.dataset.mode = dark ? 'dark' : 'light';
+      toggle.setAttribute('aria-label', dark ? 'Switch to day mode' : 'Switch to night mode');
+      toggle.title = dark ? 'Day mode' : 'Night mode';
+    }
+  }
+
+  function isDark() {
+    const t = state.settings.theme;
+    return t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
   }
 
   // ---------- Routing ----------
@@ -836,7 +891,15 @@
     if (view === 'dashboard') renderDashboard();
     else if (view === 'study') renderStudy();
     else if (view === 'session') renderSession({ focus: moveFocus ? 'question' : 'none' });
-    else if (view === 'results') renderResults();
+    else if (view === 'results') {
+      if (same) {
+        const open = new Set($$('#view-results details[open] .q-num').map((n) => n.textContent));
+        const y = window.scrollY;
+        renderResults();
+        for (const d of $$('#view-results details')) if (open.has($('.q-num', d).textContent)) d.open = true;
+        window.scrollTo(0, y);
+      } else renderResults();
+    }
     else if (view === 'questions') {
       if (same) {
         const open = new Set($$('#lib-list details[open] .q-num').map((n) => n.textContent));
@@ -868,6 +931,8 @@
 
   // ---------- Shared chrome ----------
   function renderChrome() {
+    renderAccount();
+    renderBell();
     const streak = currentStreak();
     const today = state.streak.last === dayKey();
     for (const el of $$('[data-streak]')) el.textContent = String(streak);
@@ -1054,7 +1119,7 @@
           ${last ? `<section class="card side-card">
             <h2>Last session</h2>
             <p>${esc(sessionLabel(last))} · ${lastSum.correct} of ${lastSum.total} correct${lastSum.total ? ` (${pct(lastSum.correct, lastSum.total)}%)` : ''}</p>
-            <a class="btn btn-secondary btn-sm" href="#/study/results">View results</a>
+            <a class="btn btn-secondary btn-sm" href="#/study/results" data-action="view-results">View results</a>
           </section>` : ''}
           ${queue.length ? `<section class="card side-card">
             <h2>Review list</h2>
@@ -1231,7 +1296,7 @@
     $('#map-sub').textContent = `${sessionLabel(s)} · ${done} of ${s.ids.length} answered`;
     const legend = exam
       ? [['is-current', 'Current'], ['st-answered', 'Answered', 'i-check'], ['is-flagged', 'Flagged'], ['', 'Not answered']]
-      : [['is-current', 'Current'], ['st-correct', 'Correct', 'i-check'], ['st-correct2', 'Second try', 'i-rotate'], ['st-missed', 'Missed', 'i-x'], ['st-revealed', 'Answer shown', 'i-eye'], ['', 'Not answered']];
+      : [['is-current', 'Current'], ['st-correct', 'Correct', 'i-check'], ['st-correct2', 'Second try', 'i-rotate'], ['st-missed', 'Missed', 'i-x'], ['st-revealed', 'Answer shown', 'i-eye'], ['st-retry', 'One try used'], ['', 'Not answered']];
     $('#map-legend').innerHTML = legend.map(([c, l, g]) => `<li><i class="${c}" aria-hidden="true">${g ? icon(g) : ''}</i>${l}</li>`).join('');
     $('#map-grid').innerHTML = s.ids.map((id, i) => {
       const a = s.answers[id];
@@ -1461,6 +1526,14 @@
 
   function renderQuestions() {
     initQuestionFilters();
+    const pendingOpen = ui.pendingOpen;
+    ui.pendingOpen = null;
+    window.setTimeout(() => {
+      if (!pendingOpen) return;
+      const num = `#${String(pendingOpen).padStart(3, '0')}`;
+      const item = $$('#lib-list details').find((d) => $('.q-num', d).textContent === num);
+      if (item) { item.open = true; item.scrollIntoView({ block: 'center' }); $('summary', item).focus({ preventScroll: true }); }
+    }, 0);
     $('#lib-q').value = ui.lib.q;
     $('#lib-subject').value = ui.lib.subject;
     $('#lib-diff').value = ui.lib.diff;
@@ -1597,6 +1670,9 @@
       case 'resume':
         navigate('study');
         break;
+      case 'view-results':
+        replaceRoute('results');
+        break;
       case 'discard':
         discardSession();
         break;
@@ -1654,7 +1730,59 @@
         $('#lib-q').focus();
         break;
       case 'settings':
+        closePanels(false);
         openSettings();
+        break;
+      case 'toggle-theme':
+        state.settings.theme = isDark() ? 'light' : 'dark';
+        save();
+        applyTheme();
+        announce(isDark() ? 'Night mode on' : 'Day mode on');
+        break;
+      case 'search':
+        openSearch();
+        break;
+      case 'quick-fill':
+        $('#quick-q').value = el.dataset.q;
+        renderQuickResults();
+        $('#quick-q').focus();
+        break;
+      case 'quick-open':
+        openInLibrary($('#quick-q').value, Number(el.dataset.id));
+        break;
+      case 'quick-all':
+        openInLibrary($('#quick-q').value);
+        break;
+      case 'notifications':
+        togglePanel('notif-panel', fillNotifications);
+        break;
+      case 'notif-go':
+        notifGo(el.dataset.go);
+        break;
+      case 'account':
+        togglePanel('account-panel', fillAccountPanel);
+        break;
+      case 'open-auth':
+        openAuth(el.dataset.mode || 'signin');
+        break;
+      case 'auth-mode':
+        setAuthMode(el.dataset.mode);
+        break;
+      case 'google-signin':
+        googleSignIn();
+        break;
+      case 'forgot-password':
+        forgotPassword();
+        break;
+      case 'sign-out':
+        signOutNow();
+        break;
+      case 'delete-account':
+        deleteAccount();
+        break;
+      case 'privacy':
+        closePanels(false);
+        $('#dlg-privacy').showModal();
         break;
       case 'close-dialog': {
         const d = el.closest('dialog');
@@ -1677,6 +1805,7 @@
     document.addEventListener('click', (e) => {
       const dlg = e.target instanceof HTMLDialogElement ? e.target : null;
       if (dlg && dlg.open) { dlg.close(); return; }
+      if (!e.target.closest('.pop-wrap')) closePanels(false);
       if (e.target.closest('.skip-link')) {
         e.preventDefault();
         const target = (ui.view === 'session' ? $('#q-text') : $(HEADINGS[ui.view])) || $('#main');
@@ -1719,47 +1848,59 @@
 
     document.addEventListener('input', (e) => {
       if (e.target.id === 'lib-q') onSearchInput(e.target.value);
+      else if (e.target.id === 'quick-q') renderQuickResults();
     });
 
     document.addEventListener('submit', (e) => {
       if (e.target.id === 'choices-form') {
         e.preventDefault();
         primaryAction();
+      } else if (e.target.id === 'quick-search-form') {
+        e.preventDefault();
+        if ($('#quick-q').value.trim()) openInLibrary($('#quick-q').value);
+      } else if (e.target.id === 'auth-form') {
+        e.preventDefault();
+        submitAuth();
       }
     });
 
     document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && $('.pop-panel:not([hidden])')) { closePanels(true); return; }
+      if (e.key === 'Escape') return;
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
       if (document.documentElement.classList.contains('splash-on')) return;
       if ($('dialog[open]')) return;
-      if (!state.settings.shortcuts && e.key !== 'Enter' && !e.key.startsWith('Arrow')) return;
+      if (!state.settings.shortcuts && key !== 'Enter' && !key.startsWith('Arrow')) return;
+      const key = typeof e.key === 'string' ? e.key : '';
+      if (!key) return;
       const t = e.target;
       const typing = t.closest && t.closest('input:not([type="radio"]), textarea, select, [contenteditable="true"]');
 
-      if (ui.view === 'questions' && e.key === '/' && !typing) {
+      if (key === '/' && !typing) {
         e.preventDefault();
-        $('#lib-q').focus();
+        if (ui.view === 'questions') $('#lib-q').focus();
+        else openSearch();
         return;
       }
       if (ui.view !== 'session' || typing) return;
       const s = state.session;
       if (!s || s.finishedAt) return;
-      const k = e.key.toLowerCase();
+      const k = key.toLowerCase();
       const idx = ['a', 'b', 'c', 'd'].indexOf(k) >= 0 ? ['a', 'b', 'c', 'd'].indexOf(k) : ['1', '2', '3', '4'].indexOf(k);
       if (idx >= 0 && !e.shiftKey) {
         e.preventDefault();
         selectByIndex(idx);
         return;
       }
-      if (e.key === 'Enter') {
+      if (key === 'Enter') {
         if (t.closest('button, a, summary')) return;
         e.preventDefault();
         primaryAction();
         return;
       }
-      if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && !(t.matches && t.matches('input[type="radio"]'))) {
+      if ((key === 'ArrowRight' || key === 'ArrowLeft') && !(t.matches && t.matches('input[type="radio"]'))) {
         e.preventDefault();
-        goTo(s.pos + (e.key === 'ArrowRight' ? 1 : -1));
+        goTo(s.pos + (key === 'ArrowRight' ? 1 : -1));
         return;
       }
       if (k === 'f' && s.mode === 'exam') {
@@ -1769,6 +1910,11 @@
     });
 
     window.addEventListener('hashchange', route);
+    window.addEventListener('fd-auth', onAuth);
+    window.addEventListener('online', () => { if (sync.user && (sync.status === 'offline' || sync.status === 'error')) pushNow(); });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && sync.user && Date.now() - sync.lastPull > 60000) pullAndMerge();
+    });
     window.addEventListener('storage', (e) => {
       if (e.key !== STORE_KEY) return;
       state = load();
@@ -1782,6 +1928,419 @@
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && ui.view === 'session') tick();
     });
+  }
+
+  // ---------- Accounts and sync ----------
+  const sync = { user: null, available: false, status: 'off', timer: null, lastPull: 0, firstEvent: true, intent: false };
+  const cloud = () => window.FlightDeckCloud || null;
+
+  function schedulePush() {
+    if (!sync.user) return;
+    window.clearTimeout(sync.timer);
+    sync.status = 'pending';
+    sync.timer = window.setTimeout(pushNow, 1500);
+  }
+
+  async function pushNow() {
+    const c = cloud();
+    if (!c || !c.save || !sync.user) return;
+    sync.status = 'syncing';
+    renderAccount();
+    try {
+      await c.save(state);
+      sync.status = 'synced';
+    } catch (e) {
+      sync.status = navigator.onLine ? 'error' : 'offline';
+    }
+    renderAccount();
+  }
+
+  async function pullAndMerge() {
+    const c = cloud();
+    if (!c || !c.load || !sync.user) return;
+    sync.status = 'syncing';
+    sync.lastPull = Date.now();
+    renderAccount();
+    try {
+      const raw = await c.load();
+      if (raw) {
+        state = mergeStates(state, sanitize(raw));
+        saveLocal();
+        applyTheme();
+        route({ quiet: true });
+      }
+      await c.save(state);
+      sync.status = 'synced';
+    } catch (e) {
+      sync.status = navigator.onLine ? 'error' : 'offline';
+    }
+    renderAccount();
+  }
+
+  function onAuth(e) {
+    const d = e.detail || {};
+    const before = sync.user && sync.user.uid;
+    sync.available = !!d.available;
+    sync.user = d.user || null;
+    const first = sync.firstEvent;
+    sync.firstEvent = false;
+    if (sync.user && (sync.user.uid !== before || d.profileUpdated)) {
+      if (sync.user.uid !== before) {
+        pullAndMerge().then(() => {
+          if (sync.intent) toast(`Signed in as ${firstName(sync.user)}. Your progress is synced.`);
+          sync.intent = false;
+        });
+      }
+    } else if (!sync.user) {
+      window.clearTimeout(sync.timer);
+      sync.status = 'off';
+      if (before && !first) toast('Signed out. Progress on this device is kept.');
+    }
+    renderAccount();
+  }
+
+  function firstName(u) {
+    const n = (u.name || '').trim();
+    if (n) return n.split(/\s+/)[0];
+    return (u.email || 'there').split('@')[0];
+  }
+
+  function shortName(u) {
+    const parts = (u.name || '').trim().split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) return `${parts[0]} ${parts[parts.length - 1][0].toUpperCase()}`;
+    if (parts.length === 1) return parts[0];
+    return (u.email || 'Account').split('@')[0].slice(0, 16);
+  }
+
+  function initials(u) {
+    const parts = (u.name || u.email || '?').trim().split(/[\s@._-]+/).filter(Boolean);
+    return ((parts[0] || '?')[0] + (parts.length > 1 ? parts[1][0] : '')).toUpperCase();
+  }
+
+  function avatarHtml(u, big) {
+    if (u && u.photo && /^https:\/\//.test(u.photo)) {
+      return `<img src="${esc(u.photo)}" alt="" referrerpolicy="no-referrer" width="${big ? 44 : 36}" height="${big ? 44 : 36}">`;
+    }
+    if (u) return `<span class="avatar-initials">${esc(initials(u))}</span>`;
+    return icon('i-user');
+  }
+
+  const SYNC_TEXT = {
+    off: ['i-cloud-off', 'Not syncing'],
+    pending: ['i-cloud-check', 'Saving…'],
+    syncing: ['i-cloud-check', 'Syncing…'],
+    synced: ['i-cloud-check', 'Progress synced'],
+    offline: ['i-cloud-off', 'Offline. Changes will sync when you’re back.'],
+    error: ['i-cloud-off', 'Couldn’t sync. We’ll try again.'],
+  };
+
+  function renderAccount() {
+    const u = sync.user;
+    const btn = $('#account-btn');
+    if (!btn) return;
+    // Until accounts are switched on, don't show a button that leads nowhere.
+    btn.closest('.pop-wrap').hidden = !sync.available && !sync.firstEvent;
+    $('#account-avatar').innerHTML = avatarHtml(u);
+    $('#account-avatar').classList.toggle('is-user', !!u);
+    $('#account-name').textContent = u ? shortName(u) : 'Sign in';
+    btn.setAttribute('aria-label', u ? `Account: ${u.name || u.email}` : 'Account: sign in');
+    const panel = $('#account-panel');
+    if (panel && !panel.hidden) fillAccountPanel();
+    const acct = $('#settings-account');
+    if (acct) {
+      acct.hidden = !u;
+      if (u) $('#settings-account-text').textContent = `Signed in as ${u.email || u.name}. Deleting your account removes it and all synced progress. Progress on this device stays unless you reset it below.`;
+    }
+  }
+
+  function fillAccountPanel() {
+    const u = sync.user;
+    const panel = $('#account-panel');
+    if (u) {
+      const [ic, text] = SYNC_TEXT[sync.status] || SYNC_TEXT.off;
+      panel.innerHTML = `<div class="acct-head">
+          <span class="avatar avatar-lg is-user" aria-hidden="true">${avatarHtml(u, true)}</span>
+          <div class="acct-id"><p class="acct-name">${esc(u.name || shortName(u))}</p><p class="acct-sub">${esc(u.email)}</p></div>
+        </div>
+        <p class="acct-sync acct-sync-${esc(sync.status)}">${icon(ic)}<span>${esc(text)}</span></p>
+        <div class="pop-sep"></div>
+        <button type="button" class="pop-item" data-action="settings">${icon('i-settings')}Settings</button>
+        <button type="button" class="pop-item" data-action="sign-out">${icon('i-log-out')}Sign out</button>`;
+    } else if (sync.available) {
+      panel.innerHTML = `<div class="acct-head">
+          <span class="avatar avatar-lg" aria-hidden="true">${icon('i-user')}</span>
+          <div class="acct-id"><p class="acct-name">You’re not signed in</p><p class="acct-sub">Progress is saved on this device only.</p></div>
+        </div>
+        <div class="acct-actions">
+          <button type="button" class="btn btn-primary btn-block" data-action="open-auth" data-mode="signin">Sign in</button>
+          <button type="button" class="btn btn-secondary btn-block" data-action="open-auth" data-mode="signup">Create account</button>
+        </div>
+        <div class="pop-sep"></div>
+        <button type="button" class="pop-item" data-action="settings">${icon('i-settings')}Settings</button>`;
+    } else {
+      panel.innerHTML = `<div class="acct-head">
+          <span class="avatar avatar-lg" aria-hidden="true">${icon('i-user')}</span>
+          <div class="acct-id"><p class="acct-name">Accounts are unavailable</p><p class="acct-sub">Your progress is still saved on this device.</p></div>
+        </div>
+        <div class="pop-sep"></div>
+        <button type="button" class="pop-item" data-action="settings">${icon('i-settings')}Settings</button>`;
+    }
+  }
+
+  // ---------- Top-right panels ----------
+  function closePanels(returnFocus) {
+    for (const panel of $$('.pop-panel')) {
+      if (panel.hidden) continue;
+      panel.hidden = true;
+      const btn = $(`[aria-controls="${panel.id}"]`);
+      if (btn) {
+        btn.setAttribute('aria-expanded', 'false');
+        if (returnFocus) btn.focus();
+      }
+    }
+  }
+
+  function togglePanel(id, fill) {
+    const panel = $(`#${id}`);
+    const btn = $(`[aria-controls="${id}"]`);
+    const opening = panel.hidden;
+    closePanels(false);
+    if (!opening) return;
+    fill();
+    panel.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+    const first = $('button, a', panel);
+    if (first) first.focus();
+  }
+
+  // ---------- Notifications ----------
+  function buildNotifications() {
+    const list = [];
+    const s = state.session;
+    const today = dayKey();
+    if (s && !s.finishedAt) {
+      if (s.mode === 'exam') {
+        list.push({ key: `exam:${s.number}`, icon: 'i-clock', title: 'Exam simulation in progress', body: `${answeredCount(s)} of ${s.ids.length} answered · ${formatClock(s.deadline - Date.now())} left`, action: 'resume' });
+      } else {
+        list.push({ key: `session:${s.number}`, icon: 'i-play', title: 'Pick up where you left off', body: `${sessionLabel(s)} · ${answeredCount(s)} of ${s.ids.length} answered`, action: 'resume' });
+      }
+    }
+    const queue = reviewQueue().length;
+    if (queue) list.push({ key: `review:${queue}`, icon: 'i-rotate', title: `${plural(queue, 'card')} to review`, body: 'Get one right on the first try to clear it.', action: 'review' });
+    const streak = currentStreak();
+    if (streak > 0 && state.streak.last !== today) list.push({ key: `streak:${today}`, icon: 'i-flame', title: `Keep your ${streak}-day streak`, body: 'Answer one card today to keep it going.', action: 'go-study' });
+    const last = state.history[0];
+    if (last && Date.now() - last.date < 86400000) {
+      const p = pct(last.correct, last.total);
+      list.push({ key: `result:${last.n}`, icon: last.mode === 'exam' ? 'i-award' : 'i-check-circle', title: `Session #${last.n}: ${p}%`, body: `${last.correct} of ${last.total} correct${last.mode === 'exam' ? (p >= PASS ? ' · pass' : ' · below 70%') : ''}`, action: s && s.finishedAt && s.number === last.n ? 'view-results' : 'go-study' });
+    }
+    if (!sync.user && sync.available && Object.keys(state.stats).length) list.push({ key: 'signin', icon: 'i-cloud-check', title: 'Save your progress', body: 'Sign in to keep it on every device.', action: 'open-auth' });
+    if (!state.history.length && !(s && !s.finishedAt)) list.push({ key: 'welcome', icon: 'i-sparkles', title: 'Welcome to Flight Deck', body: 'Start your first set of study cards.', action: 'go-study' });
+    return list;
+  }
+
+  function renderBell() {
+    const dot = $('#bell-dot');
+    if (!dot) return;
+    const seen = new Set(state.settings.notifSeen);
+    const list = buildNotifications();
+    const fresh = list.filter((n) => !seen.has(n.key)).length;
+    dot.hidden = fresh === 0;
+    $('#bell-btn').setAttribute('aria-label', fresh ? `Notifications, ${fresh} new` : 'Notifications');
+  }
+
+  function fillNotifications() {
+    const list = buildNotifications();
+    const seen = new Set(state.settings.notifSeen);
+    $('#notif-list').innerHTML = list.length
+      ? list.map((n) => `<li><button type="button" class="notif" data-action="notif-go" data-go="${n.action}">
+          <span class="notif-icon">${icon(n.icon)}</span>
+          <span class="notif-copy"><span class="notif-title">${esc(n.title)}${seen.has(n.key) ? '' : '<span class="notif-new">New</span>'}</span><span class="notif-body">${esc(n.body)}</span></span>
+          ${icon('i-chevron-right', 'notif-chev')}
+        </button></li>`).join('')
+      : `<li class="notif-empty">${icon('i-check-circle')}<span>You’re all caught up.</span></li>`;
+    const keys = new Set(state.settings.notifSeen);
+    for (const n of list) keys.add(n.key);
+    state.settings.notifSeen = Array.from(keys).slice(-60);
+    saveLocal();
+    renderBell();
+  }
+
+  function notifGo(action) {
+    closePanels(false);
+    if (action === 'resume' || action === 'go-study') navigate('study');
+    else if (action === 'review') startSession({ mode: 'review', size: REVIEW_BATCH });
+    else if (action === 'view-results') navigate('results');
+    else if (action === 'open-auth') openAuth('signin');
+  }
+
+  // ---------- Quick search ----------
+  function openSearch() {
+    closePanels(false);
+    const dlg = $('#dlg-search');
+    const input = $('#quick-q');
+    input.value = '';
+    renderQuickResults();
+    dlg.showModal();
+    input.focus();
+  }
+
+  function renderQuickResults() {
+    const q = $('#quick-q').value;
+    const toks = normalize(q).split(/\s+/).filter(Boolean).slice(0, 8);
+    const box = $('#quick-results');
+    if (!toks.length) {
+      box.innerHTML = `<p class="quick-hint">Try one of these</p><div class="quick-chips">${['METAR', 'night', '107.51', 'Class B', 'weight and balance', 'IMSAFE'].map((t) => `<button type="button" class="chip chip-plain quick-chip" data-action="quick-fill" data-q="${esc(t)}">${esc(t)}</button>`).join('')}</div>`;
+      return;
+    }
+    const matchers = wordMatchers(toks);
+    const hits = QUESTIONS.filter((x) => matchers.every((re) => re.test(searchText(x))));
+    const hl = highlighter(toks);
+    box.innerHTML = hits.length
+      ? `<ul class="quick-list">${hits.slice(0, 6).map((x) => `<li><button type="button" class="quick-item" data-action="quick-open" data-id="${x.id}">${subjectChip(x.category, true)}<span class="quick-text">${hl(x.question)}</span></button></li>`).join('')}</ul>
+         <button type="button" class="link-btn quick-all" data-action="quick-all">See all ${plural(hits.length, 'result')} in All questions</button>`
+      : `<p class="quick-hint">No questions match “${esc(q.trim())}”.</p>`;
+  }
+
+  function openInLibrary(q, id) {
+    ui.lib = { q, subject: '', diff: '', status: '', source: '', shown: LIB_PAGE };
+    if (id) {
+      const idx = libMatches().findIndex((x) => x.id === id);
+      if (idx >= LIB_PAGE) ui.lib.shown = Math.ceil((idx + 1) / LIB_PAGE) * LIB_PAGE;
+      ui.pendingOpen = id;
+    }
+    closeDialogs();
+    navigate('questions');
+  }
+
+  // ---------- Sign-in dialog ----------
+  const AUTH_ERRORS = {
+    'auth/invalid-credential': 'That email and password don’t match.',
+    'auth/wrong-password': 'That email and password don’t match.',
+    'auth/user-not-found': 'That email and password don’t match.',
+    'auth/invalid-email': 'Enter a valid email address.',
+    'auth/missing-email': 'Enter your email address.',
+    'auth/email-already-in-use': 'There’s already an account with that email. Try signing in.',
+    'auth/weak-password': 'Use at least 6 characters for your password.',
+    'auth/missing-password': 'Enter your password.',
+    'auth/too-many-requests': 'Too many attempts. Wait a minute and try again.',
+    'auth/network-request-failed': 'Couldn’t reach the server. Check your connection.',
+    'auth/unauthorized-domain': 'Sign-in isn’t set up for this address yet.',
+    'auth/popup-blocked': 'Your browser blocked the sign-in window. Allow pop-ups and try again.',
+    'auth/operation-not-allowed': 'That sign-in method isn’t turned on yet.',
+  };
+  const QUIET_ERRORS = ['auth/popup-closed-by-user', 'auth/cancelled-popup-request', 'auth/user-cancelled'];
+
+  function authError(e) {
+    const code = e && e.code;
+    if (QUIET_ERRORS.includes(code)) return '';
+    return AUTH_ERRORS[code] || 'Something went wrong. Please try again.';
+  }
+
+  function setAuthMode(mode) {
+    ui.authMode = mode === 'signup' ? 'signup' : 'signin';
+    const up = ui.authMode === 'signup';
+    $('#auth-title').textContent = up ? 'Create your account' : 'Sign in';
+    $('#auth-name-field').hidden = !up;
+    $('#auth-submit').textContent = up ? 'Create account' : 'Sign in';
+    $('#auth-forgot').hidden = up;
+    $('#auth-password').setAttribute('autocomplete', up ? 'new-password' : 'current-password');
+    for (const b of $$('[data-action="auth-mode"]')) b.setAttribute('aria-pressed', String(b.dataset.mode === ui.authMode));
+    $('#auth-error').textContent = '';
+  }
+
+  function openAuth(mode) {
+    closePanels(false);
+    const c = cloud();
+    if (!c || !c.available) { toast('Accounts aren’t available right now. Your progress is saved on this device.'); return; }
+    setAuthMode(mode);
+    $('#auth-form').reset();
+    $('#dlg-auth').showModal();
+    $('#auth-email').focus();
+  }
+
+  function setAuthBusy(busy) {
+    for (const el of $$('#dlg-auth button, #dlg-auth input')) el.disabled = busy;
+    $('#auth-submit').textContent = busy ? 'One moment…' : ui.authMode === 'signup' ? 'Create account' : 'Sign in';
+  }
+
+  async function submitAuth() {
+    const c = cloud();
+    const email = $('#auth-email').value.trim();
+    const password = $('#auth-password').value;
+    const name = $('#auth-name').value.trim();
+    const err = $('#auth-error');
+    err.textContent = '';
+    if (!/^\S+@\S+\.\S+$/.test(email)) { err.textContent = 'Enter a valid email address.'; $('#auth-email').focus(); return; }
+    if (password.length < 6) { err.textContent = 'Use at least 6 characters for your password.'; $('#auth-password').focus(); return; }
+    setAuthBusy(true);
+    sync.intent = true;
+    try {
+      if (ui.authMode === 'signup') await c.signUpEmail(name, email, password);
+      else await c.signInEmail(email, password);
+      $('#dlg-auth').close();
+    } catch (e) {
+      sync.intent = false;
+      err.textContent = authError(e);
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function googleSignIn() {
+    const c = cloud();
+    if (!c || !c.signInGoogle) return;
+    $('#auth-error').textContent = '';
+    sync.intent = true;
+    try {
+      await c.signInGoogle();
+      if ($('#dlg-auth').open) $('#dlg-auth').close();
+    } catch (e) {
+      sync.intent = false;
+      $('#auth-error').textContent = authError(e);
+    }
+  }
+
+  async function forgotPassword() {
+    const c = cloud();
+    const email = $('#auth-email').value.trim();
+    const err = $('#auth-error');
+    if (!/^\S+@\S+\.\S+$/.test(email)) { err.textContent = 'Enter your email above, then choose Forgot password.'; $('#auth-email').focus(); return; }
+    try {
+      await c.resetPassword(email);
+    } catch (e) {
+      if (e && e.code === 'auth/network-request-failed') { err.textContent = authError(e); return; }
+    }
+    err.textContent = 'If there’s an account for that email, a reset link is on its way.';
+  }
+
+  async function signOutNow() {
+    closePanels(false);
+    const c = cloud();
+    if (!c || !c.signOut) return;
+    if (sync.status === 'pending' || sync.status === 'syncing') { window.clearTimeout(sync.timer); await pushNow(); }
+    await c.signOut();
+  }
+
+  async function deleteAccount() {
+    const c = cloud();
+    if (!c || !sync.user) return;
+    if (!window.confirm('Delete your account and all of its synced progress? This can’t be undone. Progress on this device stays unless you reset it.')) return;
+    try {
+      window.clearTimeout(sync.timer);
+      await c.deleteAccount();
+      closeDialogs();
+      toast('Your account was deleted.');
+    } catch (e) {
+      if (e && e.code === 'auth/requires-recent-login') {
+        closeDialogs();
+        toast('For security, sign in again, then delete your account.');
+        await c.signOut();
+        openAuth('signin');
+      } else {
+        toast('Couldn’t delete your account. Please try again.');
+      }
+    }
   }
 
   // ---------- Splash ----------
@@ -1805,25 +2364,27 @@
       splash.addEventListener('animationend', (e) => { if (e.target === splash) done(); });
       window.setTimeout(done, 900);
     };
-    const timer = window.setTimeout(leave, 880);
+    const timer = window.setTimeout(leave, Math.max(120, 880 - performance.now()));
     window.addEventListener('keydown', leave, true);
     splash.addEventListener('pointerdown', leave);
   }
 
   // ---------- Start ----------
   function init() {
+    runSplash();
     if (!QUESTIONS.length) {
       document.getElementById('main').innerHTML = '<div class="page"><p class="noscript">The question bank didn’t load. Please refresh the page.</p></div>';
       return;
     }
     applyTheme();
-    runSplash();
     bindEvents();
     route();
+    const c = cloud();
+    if (c && c.ready) onAuth({ detail: { user: c.user, available: c.available } });
   }
 
   // Expose internals for automated tests only.
-  window.__FLIGHT_DECK__ = { drawIds, choicesFor, sanitize, summarize, get state() { return state; } };
+  window.__FLIGHT_DECK__ = { drawIds, choicesFor, sanitize, summarize, mergeStates, get state() { return state; } };
 
   init();
 })();

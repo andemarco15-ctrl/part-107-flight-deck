@@ -16,7 +16,8 @@
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" media="print" onload="this.media='all'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap"></noscript>
   <link rel="stylesheet" href="assets/styles.css">
   <script>
     /* Before the page paints: apply the saved theme, and play the splash once per visit. */
@@ -33,7 +34,10 @@
         if (sessionStorage.getItem('p107-splash') === 'shown') play = false;
         sessionStorage.setItem('p107-splash', 'shown');
       } catch (e) {}
-      if (play) root.classList.add('splash-on');
+      if (play) {
+        root.classList.add('splash-on');
+        setTimeout(function () { root.classList.remove('splash-on'); }, 6000);
+      }
     })();
   </script>
 </head>
@@ -88,8 +92,17 @@
       <symbol id="i-radio" viewBox="0 0 24 24"><path d="M4.9 16.1C1 12.2 1 5.8 4.9 1.9M7.8 4.7a6.14 6.14 0 0 0-.8 7.5M16.2 4.8c2 2 2.26 5.11.8 7.47M19.1 1.9a9.96 9.96 0 0 1 0 14.1M9.5 18h5M8 22l4-11 4 11"/><circle cx="12" cy="9" r="2"/></symbol>
       <symbol id="i-gauge" viewBox="0 0 24 24"><path d="m12 14 4-4M3.34 19a10 10 0 1 1 17.32 0"/></symbol>
       <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5M9 18h6M10 22h4"/></symbol>
+      <symbol id="i-bell" viewBox="0 0 24 24"><path d="M10.27 21a2 2 0 0 0 3.46 0"/><path d="M3.26 15.33A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.67C19.41 13.96 18 12.5 18 8A6 6 0 0 0 6 8c0 4.5-1.41 5.96-2.74 7.33"/></symbol>
+      <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4.2"/><path d="M4.5 20.5c1.2-3.6 4.1-5.5 7.5-5.5s6.3 1.9 7.5 5.5"/></symbol>
+      <symbol id="i-log-out" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
+      <symbol id="i-mail" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+      <symbol id="i-cloud-check" viewBox="0 0 24 24"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9z"/><path d="m9.5 13.5 2 2 3.5-4"/></symbol>
+      <symbol id="i-cloud-off" viewBox="0 0 24 24"><path d="m2 2 20 20M5.78 5.78A7 7 0 0 0 9 19h8.5a4.5 4.5 0 0 0 1.31-.2M21.53 16.5A4.5 4.5 0 0 0 17.5 10h-1.79A7 7 0 0 0 10.5 5.1"/></symbol>
+      <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
       <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
     </g>
+    <symbol id="i-google" viewBox="0 0 24 24"><path stroke="none" fill="#4285F4" d="M23.52 12.27c0-.85-.08-1.67-.22-2.45H12v4.64h6.46a5.52 5.52 0 0 1-2.4 3.62v3h3.88c2.27-2.09 3.58-5.17 3.58-8.81z"/><path stroke="none" fill="#34A853" d="M12 24c3.24 0 5.96-1.07 7.94-2.9l-3.88-3.01c-1.07.72-2.45 1.15-4.06 1.15-3.13 0-5.78-2.11-6.72-4.95H1.27v3.1A12 12 0 0 0 12 24z"/><path stroke="none" fill="#FBBC05" d="M5.28 14.29a7.2 7.2 0 0 1 0-4.58v-3.1H1.27a12 12 0 0 0 0 10.78l4.01-3.1z"/><path stroke="none" fill="#EA4335" d="M12 4.77c1.76 0 3.34.61 4.59 1.8l3.44-3.44A11.97 11.97 0 0 0 12 0 12 12 0 0 0 1.27 6.61l4.01 3.1C6.22 6.88 8.87 4.77 12 4.77z"/></symbol>
   </svg>
 
   <div class="splash" id="splash" aria-hidden="true">
@@ -142,15 +155,38 @@
     </aside>
 
     <div class="main-col">
-      <!-- Phone header -->
-      <header class="mobile-header">
-        <a class="brand" href="#/" aria-label="Part 107 Flight Deck, dashboard">
+      <!-- Top bar: brand on phones, tools in the top-right corner everywhere -->
+      <header class="topbar">
+        <a class="brand topbar-brand" href="#/" aria-label="Part 107 Flight Deck, dashboard">
           <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><use href="#logo"></use></svg>
           <span class="brand-name" aria-hidden="true">Flight Deck</span>
         </a>
-        <div class="mobile-tools">
-          <span class="streak-chip" title="Day streak"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-flame"></use></svg><b data-streak>0</b><span class="sr-only"> day streak</span></span>
-          <button type="button" class="icon-btn" data-action="settings" aria-label="Settings" aria-haspopup="dialog"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-settings"></use></svg></button>
+        <div class="top-actions">
+          <button type="button" class="top-icon" data-action="search" aria-label="Search questions" aria-haspopup="dialog">
+            <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-search"></use></svg>
+          </button>
+          <button type="button" class="top-icon theme-toggle" data-action="toggle-theme" id="theme-toggle" aria-label="Switch to dark mode">
+            <svg class="icon icon-moon" aria-hidden="true" focusable="false"><use href="#i-moon"></use></svg>
+            <svg class="icon icon-sun" aria-hidden="true" focusable="false"><use href="#i-sun"></use></svg>
+          </button>
+          <div class="pop-wrap">
+            <button type="button" class="top-icon" data-action="notifications" id="bell-btn" aria-label="Notifications" aria-expanded="false" aria-controls="notif-panel">
+              <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-bell"></use></svg>
+              <span class="bell-dot" id="bell-dot" hidden></span>
+            </button>
+            <section class="pop-panel notif-panel" id="notif-panel" aria-labelledby="notif-title" hidden>
+              <div class="pop-head"><h2 id="notif-title">Notifications</h2></div>
+              <ul class="notif-list" id="notif-list"></ul>
+            </section>
+          </div>
+          <div class="pop-wrap">
+            <button type="button" class="account-btn" data-action="account" id="account-btn" aria-expanded="false" aria-controls="account-panel">
+              <span class="avatar" id="account-avatar" aria-hidden="true"><svg class="icon" focusable="false"><use href="#i-user"></use></svg></span>
+              <span class="account-name" id="account-name">Sign in</span>
+              <svg class="icon icon-sm account-chev" aria-hidden="true" focusable="false"><use href="#i-chevron-down"></use></svg>
+            </button>
+            <section class="pop-panel account-panel" id="account-panel" aria-label="Account" hidden></section>
+          </div>
         </div>
       </header>
 
@@ -224,7 +260,7 @@
               <label class="search">
                 <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-search"></use></svg>
                 <span class="sr-only">Search questions</span>
-                <input id="lib-q" type="search" placeholder="Try night, 107.51, or METAR" autocomplete="off" spellcheck="false">
+                <input id="lib-q" type="search" placeholder="Try night, 107.51, METAR" autocomplete="off" spellcheck="false">
                 <kbd class="kbd hide-sm" aria-hidden="true">/</kbd>
               </label>
               <div class="lib-filters">
@@ -254,7 +290,7 @@
             <a href="https://www.faa.gov/sites/faa.gov/files/training_testing/testing/acs/uas_acs.pdf" target="_blank" rel="noopener noreferrer">Test standards (ACS)<svg class="icon icon-sm" aria-hidden="true" focusable="false"><use href="#i-external"></use></svg><span class="sr-only"> (opens in a new tab)</span></a>
           </nav>
           <p class="disclaimer">Educational practice aid—not an FAA endorsement, actual FAA question bank, or substitute for current regulations, NOTAMs, authorizations, and operational judgment.</p>
-          <p class="footer-small">Part 107 Flight Deck · A BroGPT Study Systems project</p>
+          <p class="footer-small">Part 107 Flight Deck · A BroGPT Study Systems project · <button type="button" class="link-btn footer-link-btn" data-action="privacy">Privacy</button></p>
         </div>
       </footer>
     </div>
@@ -296,6 +332,13 @@
           </div>
           <p class="settings-msg" id="settings-msg" role="status" aria-live="polite"></p>
         </div>
+        <div class="setting" id="settings-account" hidden>
+          <h3 class="setting-title">Account</h3>
+          <p class="setting-text" id="settings-account-text"></p>
+          <div class="setting-row">
+            <button type="button" class="btn btn-danger-soft btn-sm" data-action="delete-account"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-trash"></use></svg>Delete account</button>
+          </div>
+        </div>
         <div class="setting">
           <h3 class="setting-title">Start over</h3>
           <p class="setting-text">Erase all progress, streaks, and sessions saved on this device.</p>
@@ -327,10 +370,72 @@
     </div>
   </dialog>
 
+  <!-- Quick search -->
+  <dialog id="dlg-search" class="dialog dialog-search" aria-labelledby="search-title">
+    <div class="dialog-inner">
+      <h2 id="search-title" class="sr-only">Search questions</h2>
+      <form class="search search-lg" id="quick-search-form" role="search">
+        <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-search"></use></svg>
+        <label class="sr-only" for="quick-q">Search questions</label>
+        <input id="quick-q" type="search" placeholder="Search questions, rules, sources" autocomplete="off" spellcheck="false">
+        <button type="button" class="kbd kbd-btn" data-action="close-dialog" aria-label="Close search">Esc</button>
+      </form>
+      <div class="quick-results" id="quick-results" aria-live="polite"></div>
+    </div>
+  </dialog>
+
+  <!-- Sign in / create account -->
+  <dialog id="dlg-auth" class="dialog" aria-labelledby="auth-title">
+    <div class="dialog-inner">
+      <div class="dialog-head">
+        <div>
+          <h2 id="auth-title">Sign in</h2>
+          <p class="dialog-sub" id="auth-sub">Save your progress and pick it up on any device.</p>
+        </div>
+        <button type="button" class="icon-btn" data-action="close-dialog" aria-label="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-x"></use></svg></button>
+      </div>
+      <div class="dialog-body">
+        <div class="seg seg-2" role="group" aria-label="Choose">
+          <button type="button" class="seg-btn" data-action="auth-mode" data-mode="signin" aria-pressed="true">Sign in</button>
+          <button type="button" class="seg-btn" data-action="auth-mode" data-mode="signup" aria-pressed="false">Create account</button>
+        </div>
+        <button type="button" class="btn btn-secondary btn-lg btn-block google-btn" data-action="google-signin"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-google"></use></svg>Continue with Google</button>
+        <p class="or-line"><span>or use email</span></p>
+        <form id="auth-form" class="auth-form" novalidate>
+          <label class="field" id="auth-name-field" hidden><span class="field-label">Name</span><input class="input" id="auth-name" type="text" autocomplete="name" maxlength="60"></label>
+          <label class="field"><span class="field-label">Email</span><input class="input" id="auth-email" type="email" autocomplete="email" required></label>
+          <label class="field"><span class="field-label">Password</span><input class="input" id="auth-password" type="password" autocomplete="current-password" minlength="6" required></label>
+          <p class="auth-error" id="auth-error" role="alert"></p>
+          <button type="submit" class="btn btn-primary btn-lg btn-block" id="auth-submit">Sign in</button>
+          <button type="button" class="link-btn auth-forgot" data-action="forgot-password" id="auth-forgot">Forgot password?</button>
+        </form>
+        <p class="auth-note">By signing in, your email, name, and study progress are stored with Google Firebase so they sync across devices. <button type="button" class="link-btn" data-action="privacy">Privacy</button></p>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Privacy -->
+  <dialog id="dlg-privacy" class="dialog" aria-labelledby="privacy-title">
+    <div class="dialog-inner">
+      <div class="dialog-head">
+        <h2 id="privacy-title">Privacy</h2>
+        <button type="button" class="icon-btn" data-action="close-dialog" aria-label="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#i-x"></use></svg></button>
+      </div>
+      <div class="dialog-body prose">
+        <p><b>Without an account</b>, everything stays in your browser. Nothing about your studying is sent anywhere.</p>
+        <p><b>With an account</b>, your name, email address, and study progress (answers, review list, streak, and settings) are stored in Google Firebase so you can sign in on another device and pick up where you left off.</p>
+        <p>Your data is only used to run this site. It isn't sold, shared, or used for ads, and there are no trackers.</p>
+        <p>You can delete your account and all of its saved data at any time in <b>Settings → Account</b>.</p>
+      </div>
+    </div>
+  </dialog>
+
   <div class="toast" id="toast" aria-hidden="true" hidden></div>
   <div class="sr-only" id="live" aria-live="polite" aria-atomic="true"></div>
 
   <script src="assets/questions.js"></script>
+  <script src="assets/firebase-config.js"></script>
   <script src="assets/app.js"></script>
+  <script type="module" src="assets/cloud.js"></script>
 </body>
 </html>
