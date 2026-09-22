@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 MSG="${1:-Update site}"
-python3 tools/stamp.py .
+python3 tools/stamp.py . --no-bump  # ship exactly the build that was tested
 
 git add -A
 git diff --cached --quiet || git commit -q -m "$MSG"
